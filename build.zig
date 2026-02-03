@@ -123,23 +123,32 @@ pub fn build(b: *std.Build) void {
     const force_valgrind = b.option(
         bool,
         "valgrind",
-        "Use baseline CPU features for Valgrind compatibility.",
+        "Force baseline CPU features for Valgrind compatibility.",
     ) orelse false;
+
+    const enable_sanitizers = b.option(bool, "sanitizers", "Enable ASan/UBSan/LSan in Debug builds.") orelse false;
+    const release_mode = b.option(
+        std.builtin.OptimizeMode,
+        "release_mode",
+        "Optimize mode for the 'release' and 'run-release' steps (ReleaseSafe/ReleaseFast/ReleaseSmall).",
+    ) orelse .ReleaseFast;
 
     // Standard target options (arch, os, abi). We rely on C flags below to pin
     // the ISA to a Valgrind-friendly baseline without forcing a cross target.
-    var target_query = b.standardTargetOptionsQueryOnly(.{});
-    if (force_valgrind) {
-        target_query.cpu_model = .baseline;
-        target_query.cpu_features_add = .empty;
-        target_query.cpu_features_sub = .empty;
-    }
-    const target = b.resolveTargetQuery(target_query);
+    const base_target_query = b.standardTargetOptionsQueryOnly(.{});
+    const base_target = b.resolveTargetQuery(base_target_query);
+
+    var valgrind_target_query = base_target_query;
+    valgrind_target_query.cpu_model = .baseline;
+    valgrind_target_query.cpu_features_add = .empty;
+    valgrind_target_query.cpu_features_sub = .empty;
+    const valgrind_target = b.resolveTargetQuery(valgrind_target_query);
+
+    const target = if (force_valgrind) valgrind_target else base_target;
 
     // Standard optimization options (Debug, ReleaseSafe, ReleaseFast, ReleaseSmall)
     const optimize = b.standardOptimizeOption(.{});
 
-    const enable_sanitizers = b.option(bool, "sanitizers", "Enable ASan/UBSan/LSan in Debug builds.") orelse false;
     const exe = addServerExecutable(b, target, optimize, enable_sanitizers);
 
     // If you add crypto for handshakes (e.g., OpenSSL), link it here:
@@ -154,10 +163,18 @@ pub fn build(b: *std.Build) void {
     const debug_step = b.step("debug", "Build Debug");
     debug_step.dependOn(&debug_install.step);
 
-    const release_exe = addServerExecutable(b, target, .ReleaseFast, enable_sanitizers);
+    const release_exe = addServerExecutable(b, target, release_mode, enable_sanitizers);
     const release_install = b.addInstallArtifact(release_exe, .{});
-    const release_step = b.step("release", "Build ReleaseFast");
+    const release_step = b.step("release", "Build Release");
     release_step.dependOn(&release_install.step);
+
+    const run_release_cmd = b.addRunArtifact(release_exe);
+    run_release_cmd.step.dependOn(&release_install.step);
+    if (b.args) |args| {
+        run_release_cmd.addArgs(args);
+    }
+    const run_release_step = b.step("run-release", "Run the JSON-RPC server (release)");
+    run_release_step.dependOn(&run_release_cmd.step);
 
     // Create a 'run' step to execute the server directly via 'zig build run'
     const run_cmd = b.addRunArtifact(exe);
@@ -169,4 +186,17 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run the JSON-RPC server");
     run_step.dependOn(&run_cmd.step);
+
+    const valgrind_exe = addServerExecutable(b, valgrind_target, .Debug, false);
+    const valgrind_cmd = b.addSystemCommand(&.{
+        "valgrind",
+        "--leak-check=full",
+        "--show-leak-kinds=all",
+    });
+    valgrind_cmd.addArtifactArg(valgrind_exe);
+    if (b.args) |args| {
+        valgrind_cmd.addArgs(args);
+    }
+    const valgrind_step = b.step("valgrind", "Run the JSON-RPC server under Valgrind");
+    valgrind_step.dependOn(&valgrind_cmd.step);
 }

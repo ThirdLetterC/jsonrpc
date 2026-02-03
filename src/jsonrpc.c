@@ -12,7 +12,9 @@
 constexpr size_t INITIAL_BUFFER_CAP = 4'096;
 constexpr size_t MAX_MESSAGE_BYTES = 65'536U; // 64 KiB per JSON-RPC message
 constexpr size_t MAX_BUFFER_BYTES = 131'072U; // 128 KiB cap for partial lines
-constexpr size_t JSONRPC_ARENA_BYTES = MAX_MESSAGE_BYTES * 2U;
+// Small per-connection arena to avoid large baseline memory; larger allocations
+// fall back to the heap via jsonrpc_arena_malloc.
+constexpr size_t JSONRPC_ARENA_BYTES = INITIAL_BUFFER_CAP * 2U;
 
 constexpr int32_t JSONRPC_ERR_PARSE = -32'700;
 constexpr int32_t JSONRPC_ERR_INVALID_REQUEST = -32'600;
@@ -116,6 +118,14 @@ static void jsonrpc_init_parson_allocator() {
 
   json_set_allocation_functions(jsonrpc_arena_malloc, jsonrpc_arena_free);
   g_parson_allocator_initialized = true;
+}
+
+static void jsonrpc_conn_ensure_arena(jsonrpc_conn_t *conn) {
+  if (conn == nullptr || conn->arena != nullptr) {
+    return;
+  }
+
+  conn->arena = arena_create(JSONRPC_ARENA_BYTES);
 }
 
 static jsonrpc_arena_scope_t jsonrpc_arena_scope_begin(Arena *arena) {
@@ -515,7 +525,7 @@ static JSON_Value *jsonrpc_process_value(jsonrpc_conn_t *conn,
   conn->inbound.data = nullptr;
   conn->inbound.len = 0U;
   conn->inbound.cap = 0U;
-  conn->arena = arena_create(JSONRPC_ARENA_BYTES);
+  conn->arena = nullptr;
 
   if (conn->callbacks.on_open != nullptr) {
     conn->callbacks.on_open(conn);
@@ -598,6 +608,7 @@ void jsonrpc_conn_feed(jsonrpc_conn_t *conn, const uint8_t *data, size_t len) {
       return;
     }
 
+    jsonrpc_conn_ensure_arena(conn);
     const jsonrpc_arena_scope_t scope = jsonrpc_arena_scope_begin(conn->arena);
     JSON_Value *request = nullptr;
     JSON_Value *response = nullptr;
@@ -668,6 +679,7 @@ void jsonrpc_conn_feed(jsonrpc_conn_t *conn, const uint8_t *data, size_t len) {
   }
 
   jsonrpc_init_parson_allocator();
+  jsonrpc_conn_ensure_arena(conn);
   const jsonrpc_arena_scope_t scope = jsonrpc_arena_scope_begin(conn->arena);
 
   JSON_Value *response = jsonrpc_build_result(id, result);
@@ -690,6 +702,7 @@ void jsonrpc_conn_feed(jsonrpc_conn_t *conn, const uint8_t *data, size_t len) {
   }
 
   jsonrpc_init_parson_allocator();
+  jsonrpc_conn_ensure_arena(conn);
   const jsonrpc_arena_scope_t scope = jsonrpc_arena_scope_begin(conn->arena);
 
   JSON_Value *response = jsonrpc_build_error(id, code, message);

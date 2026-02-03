@@ -10,8 +10,8 @@
 #include "jsonrpc.h"
 
 constexpr size_t INITIAL_BUFFER_CAP = 4'096;
-constexpr size_t MAX_MESSAGE_BYTES = 1'048'576U; // 1 MiB per JSON-RPC message
-constexpr size_t MAX_BUFFER_BYTES = 2'097'152U;  // 2 MiB cap for partial lines
+constexpr size_t MAX_MESSAGE_BYTES = 65'536U; // 64 KiB per JSON-RPC message
+constexpr size_t MAX_BUFFER_BYTES = 131'072U; // 128 KiB cap for partial lines
 constexpr size_t JSONRPC_ARENA_BYTES = MAX_MESSAGE_BYTES * 2U;
 
 constexpr int32_t JSONRPC_ERR_PARSE = -32'700;

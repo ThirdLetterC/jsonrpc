@@ -5,7 +5,7 @@ Minimal JSON-RPC 2.0 server skeleton written in strict C23 with a libuv transpor
 ## Status and Limitations
 - Implements JSON-RPC 2.0 request/response handling with batch support.
 - Framing is newline-delimited JSON (one complete JSON-RPC message per line).
-- Requests larger than 1 MiB are rejected; inbound buffer is capped at 2 MiB.
+- Requests larger than 64 KiB are rejected; inbound buffer is capped at 128 KiB.
 - Suitable as a starting point for experimenting with libuv and C23 patterns, not for production use.
 - No TLS, authentication, or HTTP transport; connections are plain TCP.
 

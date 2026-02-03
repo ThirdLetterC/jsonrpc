@@ -25,6 +25,48 @@ const debug_flags = &[_][]const u8{
     "-fsanitize=leak",
 };
 
+fn findSanitizerLib(b: *std.Build, name: []const u8) ?[]const u8 {
+    const lib_dirs = &[_][]const u8{
+        "/lib/x86_64-linux-gnu",
+        "/usr/lib/x86_64-linux-gnu",
+        "/lib64",
+        "/usr/lib64",
+        "/lib",
+        "/usr/lib",
+    };
+
+    for (lib_dirs) |dir_path| {
+        const unversioned = b.fmt("{s}/lib{s}.so", .{ dir_path, name });
+        if (std.fs.accessAbsolute(unversioned, .{})) |_| {
+            return unversioned;
+        } else |_| {}
+
+        var dir = std.fs.openDirAbsolute(dir_path, .{ .iterate = true }) catch continue;
+        defer dir.close();
+
+        const prefix = b.fmt("lib{s}.so.", .{ name });
+        var it = dir.iterate();
+        while (it.next() catch break) |entry| {
+            if (entry.kind != .file and entry.kind != .sym_link) {
+                continue;
+            }
+            if (std.mem.startsWith(u8, entry.name, prefix)) {
+                return b.fmt("{s}/{s}", .{ dir_path, entry.name });
+            }
+        }
+    }
+
+    return null;
+}
+
+fn linkSanitizerLib(exe: *std.Build.Step.Compile, b: *std.Build, name: []const u8) void {
+    if (findSanitizerLib(b, name)) |path| {
+        exe.addObjectFile(.{ .cwd_relative = path });
+    } else {
+        exe.linkSystemLibrary(name);
+    }
+}
+
 fn addServerExecutable(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -67,6 +109,11 @@ fn addServerExecutable(
     if (use_sanitizers) {
         exe.bundle_compiler_rt = true;
         exe.bundle_ubsan_rt = true;
+        // The C sources are compiled with -fsanitize=..., so ensure the
+        // corresponding runtime libraries are linked.
+        linkSanitizerLib(exe, b, "asan");
+        linkSanitizerLib(exe, b, "ubsan");
+        linkSanitizerLib(exe, b, "lsan");
     }
 
     return exe;

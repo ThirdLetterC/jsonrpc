@@ -598,8 +598,7 @@ void jsonrpc_conn_feed(jsonrpc_conn_t *conn, const uint8_t *data, size_t len) {
       return;
     }
 
-    const jsonrpc_arena_scope_t scope =
-        jsonrpc_arena_scope_begin(conn->arena);
+    const jsonrpc_arena_scope_t scope = jsonrpc_arena_scope_begin(conn->arena);
     JSON_Value *request = nullptr;
     JSON_Value *response = nullptr;
     bool close_connection = false;
@@ -669,8 +668,7 @@ void jsonrpc_conn_feed(jsonrpc_conn_t *conn, const uint8_t *data, size_t len) {
   }
 
   jsonrpc_init_parson_allocator();
-  const jsonrpc_arena_scope_t scope =
-      jsonrpc_arena_scope_begin(conn->arena);
+  const jsonrpc_arena_scope_t scope = jsonrpc_arena_scope_begin(conn->arena);
 
   JSON_Value *response = jsonrpc_build_result(id, result);
   if (response == nullptr) {
@@ -692,8 +690,7 @@ void jsonrpc_conn_feed(jsonrpc_conn_t *conn, const uint8_t *data, size_t len) {
   }
 
   jsonrpc_init_parson_allocator();
-  const jsonrpc_arena_scope_t scope =
-      jsonrpc_arena_scope_begin(conn->arena);
+  const jsonrpc_arena_scope_t scope = jsonrpc_arena_scope_begin(conn->arena);
 
   JSON_Value *response = jsonrpc_build_error(id, code, message);
   if (response == nullptr) {

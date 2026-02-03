@@ -1,6 +1,7 @@
 #include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,7 +24,7 @@ static void close_handle(uv_handle_t *handle, void *arg [[maybe_unused]]) {
 
 typedef struct {
   uv_write_t req;
-  uint8_t *buffer;
+  uint8_t data[];
 } write_ctx_t;
 
 /**
@@ -33,6 +34,8 @@ typedef struct {
   uv_tcp_t tcp;
   jsonrpc_conn_t *rpc;
   jsonrpc_transport_t transport;
+  uint8_t *read_buffer;
+  size_t read_capacity;
 } client_ctx_t;
 
 static jsonrpc_callbacks_t g_callbacks = {.on_open = nullptr,
@@ -58,33 +61,36 @@ void server_request_shutdown() {
 
 static void on_uv_write(uv_write_t *req, int status [[maybe_unused]]) {
   auto ctx = (write_ctx_t *)req;
-  free(ctx->buffer);
   free(ctx);
 }
 
 static void transport_send_raw(jsonrpc_transport_t *self, const uint8_t *data,
                                size_t len) {
+  if (len == 0U) {
+    return;
+  }
+  if (len > (size_t)UINT_MAX) {
+    return;
+  }
+
   auto ctx = (client_ctx_t *)self->user_data;
 
-  auto write_ctx = (write_ctx_t *)calloc(1, sizeof(write_ctx_t));
+  if (len > SIZE_MAX - sizeof(write_ctx_t)) {
+    return;
+  }
+  const size_t alloc_size = sizeof(write_ctx_t) + len;
+  auto write_ctx = (write_ctx_t *)calloc(1, alloc_size);
   if (write_ctx == nullptr) {
     return;
   }
 
-  write_ctx->buffer = (uint8_t *)calloc(len, sizeof(uint8_t));
-  if (write_ctx->buffer == nullptr) {
-    free(write_ctx);
-    return;
-  }
+  memcpy(write_ctx->data, data, len);
 
-  memcpy(write_ctx->buffer, data, len);
-
-  uv_buf_t buf = uv_buf_init((char *)write_ctx->buffer, (unsigned int)len);
+  uv_buf_t buf = uv_buf_init((char *)write_ctx->data, (unsigned int)len);
   const int write_status =
       uv_write(&write_ctx->req, (uv_stream_t *)&ctx->tcp, &buf, 1, on_uv_write);
   if (write_status != 0) {
     fprintf(stderr, "uv_write failed: %s\n", uv_strerror(write_status));
-    free(write_ctx->buffer);
     free(write_ctx);
   }
 }
@@ -95,6 +101,7 @@ static void on_uv_client_closed(uv_handle_t *handle) {
     jsonrpc_conn_free(ctx->rpc);
     ctx->rpc = nullptr;
   }
+  free(ctx->read_buffer);
   free(ctx);
 }
 
@@ -105,8 +112,18 @@ static void transport_close(jsonrpc_transport_t *self) {
 
 static void on_uv_alloc(uv_handle_t *handle [[maybe_unused]],
                         size_t suggested_size [[maybe_unused]], uv_buf_t *buf) {
-  buf->base = (char *)calloc(READ_CHUNK, sizeof(uint8_t));
-  buf->len = buf->base == nullptr ? 0U : (unsigned int)READ_CHUNK;
+  auto ctx = (client_ctx_t *)handle->data;
+  if (ctx == nullptr) {
+    buf->base = nullptr;
+    buf->len = 0U;
+    return;
+  }
+  if (ctx->read_buffer == nullptr) {
+    ctx->read_buffer = (uint8_t *)calloc(READ_CHUNK, sizeof(uint8_t));
+    ctx->read_capacity = ctx->read_buffer == nullptr ? 0U : READ_CHUNK;
+  }
+  buf->base = (char *)ctx->read_buffer;
+  buf->len = (unsigned int)ctx->read_capacity;
 }
 
 static void on_uv_read(uv_stream_t *stream, ssize_t nread,
@@ -117,7 +134,6 @@ static void on_uv_read(uv_stream_t *stream, ssize_t nread,
   } else if (nread < 0) {
     ctx->transport.close(&ctx->transport);
   }
-  free(buf->base);
 }
 
 static void on_new_connection(uv_stream_t *server, int status) {
@@ -142,6 +158,13 @@ static void on_new_connection(uv_stream_t *server, int status) {
     ctx->transport.user_data = ctx;
     ctx->transport.send_raw = transport_send_raw;
     ctx->transport.close = transport_close;
+
+    ctx->read_buffer = (uint8_t *)calloc(READ_CHUNK, sizeof(uint8_t));
+    ctx->read_capacity = ctx->read_buffer == nullptr ? 0U : READ_CHUNK;
+    if (ctx->read_buffer == nullptr) {
+      transport_close(&ctx->transport);
+      return;
+    }
 
     ctx->rpc =
         jsonrpc_conn_new(ctx->transport, server_get_callbacks(), nullptr);

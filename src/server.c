@@ -222,9 +222,8 @@ void start_jsonrpc_server(int32_t port, jsonrpc_callbacks_t callbacks) {
     return;
   }
 
-  const int listen_status =
-      uv_listen((uv_stream_t *)&g_server, (int)SERVER_BACKLOG,
-                on_new_connection);
+  const int listen_status = uv_listen((uv_stream_t *)&g_server,
+                                      (int)SERVER_BACKLOG, on_new_connection);
   if (listen_status != 0) {
     fprintf(stderr, "uv_listen failed: %s\n", uv_strerror(listen_status));
     return;

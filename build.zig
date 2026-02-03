@@ -44,7 +44,7 @@ fn findSanitizerLib(b: *std.Build, name: []const u8) ?[]const u8 {
         var dir = std.fs.openDirAbsolute(dir_path, .{ .iterate = true }) catch continue;
         defer dir.close();
 
-        const prefix = b.fmt("lib{s}.so.", .{ name });
+        const prefix = b.fmt("lib{s}.so.", .{name});
         var it = dir.iterate();
         while (it.next() catch break) |entry| {
             if (entry.kind != .file and entry.kind != .sym_link) {

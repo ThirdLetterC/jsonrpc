@@ -14,6 +14,18 @@
 constexpr int32_t JSONRPC_ERR_INVALID_PARAMS = -32'602;
 constexpr int32_t JSONRPC_ERR_INTERNAL = -32'603;
 
+static const char *libuv_fs_runtime() {
+#if defined(__linux__)
+  constexpr unsigned int UV_VER_1_45_0 = (1U << 16) | (45U << 8) | 0U;
+  constexpr unsigned int UV_VER_1_49_0 = (1U << 16) | (49U << 8) | 0U;
+  const auto runtime_version = uv_version();
+  if (runtime_version >= UV_VER_1_45_0 && runtime_version < UV_VER_1_49_0) {
+    return "io_uring";
+  }
+#endif
+  return "thread pool";
+}
+
 void my_on_open([[maybe_unused]] jsonrpc_conn_t *conn) {
   printf("[Server] New JSON-RPC connection opened.\n");
 }
@@ -122,6 +134,7 @@ int main(int argc, char **argv) {
                                    .on_request = my_on_request,
                                    .on_notification = my_on_notification};
   printf("Starting JSON-RPC Server on port %" PRId32 "...\n", port);
+  printf("libuv fs runtime: %s\n", libuv_fs_runtime());
 
   auto loop = uv_default_loop();
   uv_signal_t sigint_handle;

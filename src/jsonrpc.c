@@ -3,8 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define ARENA_DEFAULT_ALIGNMENT alignof(max_align_t)
-#define ARENA_IMPLEMENTATION
 #include "arena.h"
 
 #include "jsonrpc.h"

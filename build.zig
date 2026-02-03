@@ -9,6 +9,7 @@ const common_flags = &[_][]const u8{
     "-Werror",
     "-std=c23",
     "-D_GNU_SOURCE",
+    "-DARENA_DEFAULT_ALIGNMENT=alignof(max_align_t)",
 };
 
 const debug_flags = &[_][]const u8{
@@ -20,6 +21,7 @@ const debug_flags = &[_][]const u8{
     "-Werror",
     "-std=c23",
     "-D_GNU_SOURCE",
+    "-DARENA_DEFAULT_ALIGNMENT=alignof(max_align_t)",
     "-fsanitize=address",
     "-fsanitize=undefined",
     "-fsanitize=leak",
@@ -91,6 +93,7 @@ fn addServerExecutable(
             "main.c",
             "server.c",
             "jsonrpc.c",
+            "arena.c",
             "parson.c",
         },
         .flags = c_flags,

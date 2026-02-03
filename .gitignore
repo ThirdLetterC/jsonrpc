@@ -14,3 +14,5 @@ zig-*/
 
 massif.out.*
 a
+
+tools/bench_rps

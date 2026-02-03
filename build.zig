@@ -106,11 +106,60 @@ fn addServerExecutable(
     // Link against the C standard library
     exe.linkLibC();
 
+    if (optimize != .Debug) {
+        exe.root_module.strip = true;
+    }
+
     if (use_sanitizers) {
         exe.bundle_compiler_rt = true;
         exe.bundle_ubsan_rt = true;
         // The C sources are compiled with -fsanitize=..., so ensure the
         // corresponding runtime libraries are linked.
+        linkSanitizerLib(exe, b, "asan");
+        linkSanitizerLib(exe, b, "ubsan");
+        linkSanitizerLib(exe, b, "lsan");
+    }
+
+    return exe;
+}
+
+fn addBenchExecutable(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    enable_sanitizers: bool,
+) *std.Build.Step.Compile {
+    const use_sanitizers = enable_sanitizers and optimize == .Debug;
+    const c_flags = if (use_sanitizers) debug_flags else common_flags;
+
+    const exe = b.addExecutable(.{
+        .name = "bench_rps",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    exe.addCSourceFile(.{
+        .file = b.path("tools/bench_rps.c"),
+        .flags = c_flags,
+    });
+    exe.addCSourceFile(.{
+        .file = b.path("src/parson.c"),
+        .flags = c_flags,
+    });
+
+    exe.addIncludePath(b.path("src"));
+    exe.linkSystemLibrary("uv");
+    exe.linkLibC();
+
+    if (optimize != .Debug) {
+        exe.root_module.strip = true;
+    }
+
+    if (use_sanitizers) {
+        exe.bundle_compiler_rt = true;
+        exe.bundle_ubsan_rt = true;
         linkSanitizerLib(exe, b, "asan");
         linkSanitizerLib(exe, b, "ubsan");
         linkSanitizerLib(exe, b, "lsan");
@@ -150,6 +199,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const exe = addServerExecutable(b, target, optimize, enable_sanitizers);
+    const bench_exe = addBenchExecutable(b, target, optimize, enable_sanitizers);
 
     // If you add crypto for handshakes (e.g., OpenSSL), link it here:
     // exe.linkSystemLibrary("ssl");
@@ -157,16 +207,23 @@ pub fn build(b: *std.Build) void {
 
     // Install the artifact (moves it to zig-out/bin)
     b.installArtifact(exe);
+    b.installArtifact(bench_exe);
 
     const debug_exe = addServerExecutable(b, target, .Debug, enable_sanitizers);
+    const debug_bench_exe = addBenchExecutable(b, target, .Debug, enable_sanitizers);
     const debug_install = b.addInstallArtifact(debug_exe, .{});
+    const debug_bench_install = b.addInstallArtifact(debug_bench_exe, .{});
     const debug_step = b.step("debug", "Build Debug");
     debug_step.dependOn(&debug_install.step);
+    debug_step.dependOn(&debug_bench_install.step);
 
     const release_exe = addServerExecutable(b, target, release_mode, enable_sanitizers);
+    const release_bench_exe = addBenchExecutable(b, target, release_mode, enable_sanitizers);
     const release_install = b.addInstallArtifact(release_exe, .{});
+    const release_bench_install = b.addInstallArtifact(release_bench_exe, .{});
     const release_step = b.step("release", "Build Release");
     release_step.dependOn(&release_install.step);
+    release_step.dependOn(&release_bench_install.step);
 
     const run_release_cmd = b.addRunArtifact(release_exe);
     run_release_cmd.step.dependOn(&release_install.step);

@@ -21,6 +21,7 @@ Minimal JSON-RPC 2.0 server skeleton written in strict C23 with a libuv transpor
 - Default debug build: `just build` or `zig build`.
 - Release-style builds: `zig build -Doptimize=ReleaseSafe` (or `ReleaseFast`/`ReleaseSmall`).
 - Address/UB/leak sanitizers (Debug only): `zig build -Dsanitizers=true`.
+- Benchmark tool (`bench_rps`) is installed to `zig-out/bin/bench_rps` by `zig build`.
 
 ## Running
 
@@ -37,6 +38,12 @@ Minimal JSON-RPC 2.0 server skeleton written in strict C23 with a libuv transpor
 - Example add:
   `{"jsonrpc":"2.0","id":2,"method":"add","params":[1,2,3]}` -> `{"jsonrpc":"2.0","id":2,"result":6}`
 - Notifications omit `id` and receive no response.
+
+## Benchmarking
+
+- Build (if not already): `zig build`
+- Example run:
+  `./zig-out/bin/bench_rps --host 127.0.0.1 --port 8080 --connections 50 --duration 5 --timeout 5 --method ping`
 
 ## Project Layout
 

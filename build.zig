@@ -120,9 +120,21 @@ fn addServerExecutable(
 }
 
 pub fn build(b: *std.Build) void {
+    const force_valgrind = b.option(
+        bool,
+        "valgrind",
+        "Use baseline CPU features for Valgrind compatibility.",
+    ) orelse false;
+
     // Standard target options (arch, os, abi). We rely on C flags below to pin
     // the ISA to a Valgrind-friendly baseline without forcing a cross target.
-    const target = b.standardTargetOptions(.{});
+    var target_query = b.standardTargetOptionsQueryOnly(.{});
+    if (force_valgrind) {
+        target_query.cpu_model = .baseline;
+        target_query.cpu_features_add = .empty;
+        target_query.cpu_features_sub = .empty;
+    }
+    const target = b.resolveTargetQuery(target_query);
 
     // Standard optimization options (Debug, ReleaseSafe, ReleaseFast, ReleaseSmall)
     const optimize = b.standardOptimizeOption(.{});

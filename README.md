@@ -39,3 +39,14 @@ Minimal JSON-RPC 2.0 server skeleton written in strict C23 with a libuv transpor
 - `src/jsonrpc.c` / `src/jsonrpc.h` — JSON-RPC protocol handling and callback surfaces.
 - `build.zig` — Zig build graph, compiler flags (`-std=c23 -Wall -Wextra -Wpedantic -Werror`), and sanitizer toggles.
 - `justfile` — helper tasks for build, run, deps, format, and leak checks.
+
+## Valgrind Memory Profiling
+
+To build and run the server with Valgrind's Massif tool for memory profiling, use:
+
+```
+zig build -Dvalgrind
+
+valgrind --tool=massif --pages-as-heap=yes --stacks=yes ./zig-out/bin/jsonrpc_server
+ms_print massif.out.<pid>
+```

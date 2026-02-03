@@ -16,8 +16,14 @@ static uv_loop_t *g_loop = nullptr;
 static uv_tcp_t g_server;
 static bool g_shutdown_requested = false;
 
+static void on_uv_client_closed(uv_handle_t *handle);
+
 static void close_handle(uv_handle_t *handle, void *arg [[maybe_unused]]) {
   if (!uv_is_closing(handle)) {
+    if (uv_handle_get_type(handle) == UV_TCP && handle->data != nullptr) {
+      uv_close(handle, on_uv_client_closed);
+      return;
+    }
     uv_close(handle, nullptr);
   }
 }
@@ -107,7 +113,9 @@ static void on_uv_client_closed(uv_handle_t *handle) {
 
 static void transport_close(jsonrpc_transport_t *self) {
   auto ctx = (client_ctx_t *)self->user_data;
-  uv_close((uv_handle_t *)&ctx->tcp, on_uv_client_closed);
+  if (!uv_is_closing((uv_handle_t *)&ctx->tcp)) {
+    uv_close((uv_handle_t *)&ctx->tcp, on_uv_client_closed);
+  }
 }
 
 static void on_uv_alloc(uv_handle_t *handle [[maybe_unused]],
@@ -180,7 +188,7 @@ static void on_new_connection(uv_stream_t *server, int status) {
       transport_close(&ctx->transport);
     }
   } else {
-    free(ctx);
+    uv_close((uv_handle_t *)&ctx->tcp, on_uv_client_closed);
   }
 }
 

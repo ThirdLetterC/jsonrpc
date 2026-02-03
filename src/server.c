@@ -13,6 +13,7 @@
 
 constexpr size_t READ_CHUNK_MIN = 1'024;
 constexpr size_t READ_CHUNK_MAX = 4'096;
+constexpr int32_t SERVER_BACKLOG = 4'096;
 static uv_loop_t *g_loop = nullptr;
 static uv_tcp_t g_server;
 static bool g_shutdown_requested = false;
@@ -154,6 +155,7 @@ static void on_uv_read(uv_stream_t *stream, ssize_t nread,
 
 static void on_new_connection(uv_stream_t *server, int status) {
   if (status < 0) {
+    fprintf(stderr, "on_new_connection failed: %s\n", uv_strerror(status));
     return;
   }
 
@@ -221,7 +223,8 @@ void start_jsonrpc_server(int32_t port, jsonrpc_callbacks_t callbacks) {
   }
 
   const int listen_status =
-      uv_listen((uv_stream_t *)&g_server, 128, on_new_connection);
+      uv_listen((uv_stream_t *)&g_server, (int)SERVER_BACKLOG,
+                on_new_connection);
   if (listen_status != 0) {
     fprintf(stderr, "uv_listen failed: %s\n", uv_strerror(listen_status));
     return;

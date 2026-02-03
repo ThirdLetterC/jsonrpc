@@ -14,7 +14,8 @@ constexpr size_t MAX_MESSAGE_BYTES = 65'536U; // 64 KiB per JSON-RPC message
 constexpr size_t MAX_BUFFER_BYTES = 131'072U; // 128 KiB cap for partial lines
 // Small per-connection arena to avoid large baseline memory; larger allocations
 // fall back to the heap via jsonrpc_arena_malloc.
-constexpr size_t JSONRPC_ARENA_BYTES = INITIAL_BUFFER_CAP * 2U;
+constexpr size_t JSONRPC_ARENA_BYTES = INITIAL_BUFFER_CAP;
+constexpr size_t RPC_BUFFER_SHRINK_THRESHOLD = INITIAL_BUFFER_CAP * 4U;
 
 constexpr int32_t JSONRPC_ERR_PARSE = -32'700;
 constexpr int32_t JSONRPC_ERR_INVALID_REQUEST = -32'600;
@@ -176,6 +177,27 @@ static void rpc_buffer_free(rpc_buffer_t *buffer) {
   buffer->cap = 0U;
 }
 
+static void rpc_buffer_maybe_shrink(rpc_buffer_t *buffer) {
+  if (buffer == nullptr || buffer->data == nullptr) {
+    return;
+  }
+  if (buffer->len != 0U) {
+    return;
+  }
+  if (buffer->cap <= RPC_BUFFER_SHRINK_THRESHOLD) {
+    return;
+  }
+
+  auto new_data = (uint8_t *)calloc(INITIAL_BUFFER_CAP, sizeof(uint8_t));
+  if (new_data == nullptr) {
+    return;
+  }
+
+  free(buffer->data);
+  buffer->data = new_data;
+  buffer->cap = INITIAL_BUFFER_CAP;
+}
+
 [[nodiscard]]
 static bool rpc_buffer_reserve(rpc_buffer_t *buffer, size_t desired) {
   if (desired <= buffer->cap) {
@@ -230,6 +252,9 @@ static void rpc_buffer_consume(rpc_buffer_t *buffer, size_t count) {
     memmove(buffer->data, buffer->data + count, remaining);
   }
   buffer->len = remaining;
+  if (buffer->len == 0U) {
+    rpc_buffer_maybe_shrink(buffer);
+  }
 }
 
 [[nodiscard]]

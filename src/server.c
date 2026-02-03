@@ -11,7 +11,8 @@
 #include "jsonrpc.h"
 #include "server.h"
 
-constexpr size_t READ_CHUNK = 4'096;
+constexpr size_t READ_CHUNK_MIN = 1'024;
+constexpr size_t READ_CHUNK_MAX = 4'096;
 static uv_loop_t *g_loop = nullptr;
 static uv_tcp_t g_server;
 static bool g_shutdown_requested = false;
@@ -118,8 +119,8 @@ static void transport_close(jsonrpc_transport_t *self) {
   }
 }
 
-static void on_uv_alloc(uv_handle_t *handle [[maybe_unused]],
-                        size_t suggested_size [[maybe_unused]], uv_buf_t *buf) {
+static void on_uv_alloc(uv_handle_t *handle, size_t suggested_size,
+                        uv_buf_t *buf) {
   auto ctx = (client_ctx_t *)handle->data;
   if (ctx == nullptr) {
     buf->base = nullptr;
@@ -127,8 +128,15 @@ static void on_uv_alloc(uv_handle_t *handle [[maybe_unused]],
     return;
   }
   if (ctx->read_buffer == nullptr) {
-    ctx->read_buffer = (uint8_t *)calloc(READ_CHUNK, sizeof(uint8_t));
-    ctx->read_capacity = ctx->read_buffer == nullptr ? 0U : READ_CHUNK;
+    size_t alloc_size = suggested_size;
+    if (alloc_size < READ_CHUNK_MIN) {
+      alloc_size = READ_CHUNK_MIN;
+    } else if (alloc_size > READ_CHUNK_MAX) {
+      alloc_size = READ_CHUNK_MAX;
+    }
+
+    ctx->read_buffer = (uint8_t *)calloc(alloc_size, sizeof(uint8_t));
+    ctx->read_capacity = ctx->read_buffer == nullptr ? 0U : alloc_size;
   }
   buf->base = (char *)ctx->read_buffer;
   buf->len = (unsigned int)ctx->read_capacity;
@@ -166,13 +174,6 @@ static void on_new_connection(uv_stream_t *server, int status) {
     ctx->transport.user_data = ctx;
     ctx->transport.send_raw = transport_send_raw;
     ctx->transport.close = transport_close;
-
-    ctx->read_buffer = (uint8_t *)calloc(READ_CHUNK, sizeof(uint8_t));
-    ctx->read_capacity = ctx->read_buffer == nullptr ? 0U : READ_CHUNK;
-    if (ctx->read_buffer == nullptr) {
-      transport_close(&ctx->transport);
-      return;
-    }
 
     ctx->rpc =
         jsonrpc_conn_new(ctx->transport, server_get_callbacks(), nullptr);

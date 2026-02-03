@@ -235,7 +235,7 @@ static bool jsonrpc_send_value(jsonrpc_conn_t *conn, const JSON_Value *value) {
   }
 
   const size_t len = strlen(serialized);
-  auto payload = (uint8_t *)calloc(len + 1U, sizeof(uint8_t));
+  auto payload = (uint8_t *)jsonrpc_arena_malloc(len + 1U);
   if (payload == nullptr) {
     json_free_serialized_string(serialized);
     return false;
@@ -244,7 +244,7 @@ static bool jsonrpc_send_value(jsonrpc_conn_t *conn, const JSON_Value *value) {
   memcpy(payload, serialized, len);
   payload[len] = '\n';
   conn->transport.send_raw(&conn->transport, payload, len + 1U);
-  free(payload);
+  jsonrpc_arena_free(payload);
   json_free_serialized_string(serialized);
   return true;
 }
@@ -598,30 +598,30 @@ void jsonrpc_conn_feed(jsonrpc_conn_t *conn, const uint8_t *data, size_t len) {
       return;
     }
 
-    auto line = (char *)calloc(line_len + 1U, sizeof(char));
-    if (line == nullptr) {
-      const bool sent =
-          jsonrpc_conn_send_error(conn, nullptr, JSONRPC_ERR_INTERNAL, nullptr);
-      if (!sent && conn->transport.close != nullptr) {
-        conn->transport.close(&conn->transport);
-        return;
-      }
-      rpc_buffer_consume(&conn->inbound, consume_len);
-      continue;
-    }
-
     const jsonrpc_arena_scope_t scope =
         jsonrpc_arena_scope_begin(conn->arena);
     JSON_Value *request = nullptr;
     JSON_Value *response = nullptr;
     bool close_connection = false;
 
+    auto line = (char *)jsonrpc_arena_malloc(line_len + 1U);
+    if (line == nullptr) {
+      const bool sent =
+          jsonrpc_conn_send_error(conn, nullptr, JSONRPC_ERR_INTERNAL, nullptr);
+      if (!sent && conn->transport.close != nullptr) {
+        conn->transport.close(&conn->transport);
+        close_connection = true;
+      }
+      rpc_buffer_consume(&conn->inbound, consume_len);
+      goto cleanup_message;
+    }
+
     memcpy(line, conn->inbound.data, line_len);
     line[line_len] = '\0';
     rpc_buffer_consume(&conn->inbound, consume_len);
 
     request = json_parse_string(line);
-    free(line);
+    jsonrpc_arena_free(line);
 
     if (request == nullptr) {
       const bool sent =

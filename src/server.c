@@ -74,7 +74,7 @@ static void on_uv_write(uv_write_t *req, int status [[maybe_unused]]) {
 
 static void transport_send_raw(jsonrpc_transport_t *self, const uint8_t *data,
                                size_t len) {
-  if (len == 0U) {
+  if (self == nullptr || data == nullptr || len == 0U) {
     return;
   }
   if (len > (size_t)UINT_MAX) {
@@ -82,6 +82,9 @@ static void transport_send_raw(jsonrpc_transport_t *self, const uint8_t *data,
   }
 
   auto ctx = (client_ctx_t *)self->user_data;
+  if (ctx == nullptr || uv_is_closing((uv_handle_t *)&ctx->tcp)) {
+    return;
+  }
 
   if (len > SIZE_MAX - sizeof(write_ctx_t)) {
     return;
@@ -104,7 +107,16 @@ static void transport_send_raw(jsonrpc_transport_t *self, const uint8_t *data,
 }
 
 static void on_uv_client_closed(uv_handle_t *handle) {
+  if (handle == nullptr) {
+    return;
+  }
+
   auto ctx = (client_ctx_t *)handle->data;
+  if (ctx == nullptr) {
+    return;
+  }
+
+  handle->data = nullptr;
   if (ctx->rpc != nullptr) {
     jsonrpc_conn_free(ctx->rpc);
     ctx->rpc = nullptr;
@@ -114,6 +126,10 @@ static void on_uv_client_closed(uv_handle_t *handle) {
 }
 
 static void transport_close(jsonrpc_transport_t *self) {
+  if (self == nullptr || self->user_data == nullptr) {
+    return;
+  }
+
   auto ctx = (client_ctx_t *)self->user_data;
   if (!uv_is_closing((uv_handle_t *)&ctx->tcp)) {
     uv_close((uv_handle_t *)&ctx->tcp, on_uv_client_closed);
@@ -146,8 +162,19 @@ static void on_uv_alloc(uv_handle_t *handle, size_t suggested_size,
 static void on_uv_read(uv_stream_t *stream, ssize_t nread,
                        const uv_buf_t *buf) {
   auto ctx = (client_ctx_t *)stream->data;
+  if (ctx == nullptr) {
+    return;
+  }
+
   if (nread > 0) {
-    jsonrpc_conn_feed(ctx->rpc, (uint8_t *)buf->base, (size_t)nread);
+    if (buf == nullptr || buf->base == nullptr) {
+      ctx->transport.close(&ctx->transport);
+      return;
+    }
+
+    if (ctx->rpc != nullptr) {
+      jsonrpc_conn_feed(ctx->rpc, (uint8_t *)buf->base, (size_t)nread);
+    }
   } else if (nread < 0) {
     ctx->transport.close(&ctx->transport);
   }
@@ -203,42 +230,53 @@ void start_jsonrpc_server(int32_t port, jsonrpc_callbacks_t callbacks) {
 
   g_shutdown_requested = false;
   g_loop = uv_default_loop();
+  if (g_loop == nullptr) {
+    fprintf(stderr, "uv_default_loop failed.\n");
+    return;
+  }
+
+  int run_status = 0;
   const int tcp_status = uv_tcp_init(g_loop, &g_server);
   if (tcp_status != 0) {
     fprintf(stderr, "uv_tcp_init failed: %s\n", uv_strerror(tcp_status));
-    return;
+    goto cleanup_loop;
   }
 
   struct sockaddr_in addr;
   const int addr_status = uv_ip4_addr("0.0.0.0", (int)port, &addr);
   if (addr_status != 0) {
     fprintf(stderr, "uv_ip4_addr failed: %s\n", uv_strerror(addr_status));
-    return;
+    goto cleanup_loop;
   }
   const int bind_status =
       uv_tcp_bind(&g_server, (const struct sockaddr *)&addr, 0);
   if (bind_status != 0) {
     fprintf(stderr, "uv_tcp_bind failed: %s\n", uv_strerror(bind_status));
-    return;
+    goto cleanup_loop;
   }
 
   const int listen_status = uv_listen((uv_stream_t *)&g_server,
                                       (int)SERVER_BACKLOG, on_new_connection);
   if (listen_status != 0) {
     fprintf(stderr, "uv_listen failed: %s\n", uv_strerror(listen_status));
-    return;
+    goto cleanup_loop;
   }
 
-  int run_status = uv_run(g_loop, UV_RUN_DEFAULT);
+  run_status = uv_run(g_loop, UV_RUN_DEFAULT);
   if (g_shutdown_requested) {
     // Drain close callbacks to free contexts before exit.
     run_status = uv_run(g_loop, UV_RUN_DEFAULT);
   }
 
+cleanup_loop:
+  uv_walk(g_loop, close_handle, nullptr);
+  (void)uv_run(g_loop, UV_RUN_DEFAULT);
+
   const int loop_status = uv_loop_close(g_loop);
   if (loop_status != 0) {
     fprintf(stderr, "uv_loop_close failed: %s\n", uv_strerror(loop_status));
   }
+  g_loop = nullptr;
 
   if (run_status != 0) {
     fprintf(stderr, "uv_run exited with active handles (%d).\n", run_status);

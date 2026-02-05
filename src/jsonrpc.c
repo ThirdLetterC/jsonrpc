@@ -198,13 +198,24 @@ static void rpc_buffer_maybe_shrink(rpc_buffer_t *buffer) {
 
 [[nodiscard]]
 static bool rpc_buffer_reserve(rpc_buffer_t *buffer, size_t desired) {
+  if (buffer == nullptr) {
+    return false;
+  }
+
   if (desired <= buffer->cap) {
     return true;
   }
 
   auto new_cap = buffer->cap == 0U ? INITIAL_BUFFER_CAP : buffer->cap;
   while (new_cap < desired) {
+    if (new_cap > SIZE_MAX / 2U) {
+      new_cap = desired;
+      break;
+    }
     new_cap *= 2U;
+  }
+  if (new_cap < desired) {
+    return false;
   }
 
   auto new_data = (uint8_t *)calloc(new_cap, sizeof(uint8_t));
@@ -214,6 +225,8 @@ static bool rpc_buffer_reserve(rpc_buffer_t *buffer, size_t desired) {
 
   if (buffer->data != nullptr && buffer->len > 0U) {
     memcpy(new_data, buffer->data, buffer->len);
+  }
+  if (buffer->data != nullptr) {
     free(buffer->data);
   }
 
@@ -225,13 +238,16 @@ static bool rpc_buffer_reserve(rpc_buffer_t *buffer, size_t desired) {
 [[nodiscard]]
 static bool rpc_buffer_append(rpc_buffer_t *buffer, const uint8_t *data,
                               size_t len) {
+  if (buffer == nullptr || (len != 0U && data == nullptr)) {
+    return false;
+  }
   if (len == 0U) {
     return true;
   }
-  const size_t required = buffer->len + len;
-  if (required > MAX_BUFFER_BYTES) {
+  if (len > MAX_BUFFER_BYTES - buffer->len) {
     return false;
   }
+  const size_t required = buffer->len + len;
   if (!rpc_buffer_reserve(buffer, required)) {
     return false;
   }
@@ -422,20 +438,20 @@ static JSON_Value *jsonrpc_process_object(jsonrpc_conn_t *conn,
     return jsonrpc_build_error(nullptr, JSONRPC_ERR_INVALID_REQUEST, nullptr);
   }
 
-  const char *version = json_object_get_string(obj, "jsonrpc");
-  if (version == nullptr || strcmp(version, "2.0") != 0) {
-    return jsonrpc_build_error(nullptr, JSONRPC_ERR_INVALID_REQUEST, nullptr);
-  }
-
-  const char *method = json_object_get_string(obj, "method");
-  if (method == nullptr) {
-    return jsonrpc_build_error(nullptr, JSONRPC_ERR_INVALID_REQUEST, nullptr);
-  }
-
   const bool has_id = json_object_has_value(obj, "id");
   const JSON_Value *id = has_id ? json_object_get_value(obj, "id") : nullptr;
   if (has_id && !jsonrpc_id_is_valid(id)) {
     return jsonrpc_build_error(nullptr, JSONRPC_ERR_INVALID_REQUEST, nullptr);
+  }
+
+  const char *version = json_object_get_string(obj, "jsonrpc");
+  if (version == nullptr || strcmp(version, "2.0") != 0) {
+    return jsonrpc_build_error(id, JSONRPC_ERR_INVALID_REQUEST, nullptr);
+  }
+
+  const char *method = json_object_get_string(obj, "method");
+  if (method == nullptr) {
+    return jsonrpc_build_error(id, JSONRPC_ERR_INVALID_REQUEST, nullptr);
   }
 
   const JSON_Value *params = json_object_get_value(obj, "params");
@@ -558,15 +574,15 @@ static JSON_Value *jsonrpc_process_value(jsonrpc_conn_t *conn,
 }
 
 void jsonrpc_conn_free(jsonrpc_conn_t *conn) {
-  if (conn == nullptr) {
+  if (conn == nullptr || conn->closed) {
     return;
   }
 
-  if (!conn->closed && conn->callbacks.on_close != nullptr) {
+  conn->closed = true;
+  if (conn->callbacks.on_close != nullptr) {
     conn->callbacks.on_close(conn);
   }
 
-  conn->closed = true;
   rpc_buffer_free(&conn->inbound);
   if (conn->arena != nullptr) {
     if (g_current_arena == conn->arena) {

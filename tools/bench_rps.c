@@ -13,7 +13,7 @@
 
 #include <uv.h>
 
-#include "../src/parson.h"
+#include <jsonrpc/parson.h>
 
 constexpr int32_t DEFAULT_PORT = 8080;
 constexpr int32_t DEFAULT_CONNECTIONS = 50;

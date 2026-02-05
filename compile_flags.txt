@@ -3,3 +3,4 @@
 -Wextra
 -Wpedantic
 -Werror
+-Iinclude

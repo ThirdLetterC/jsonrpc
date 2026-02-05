@@ -203,10 +203,10 @@ See README.md for more in-depth usage docs and an
 example.
 
 QUICK USAGE:
-  Compile arena.c and include "arena.h".
+  Compile arena.c and include <jsonrpc/arena.h>.
 
   Optional build-time macros (define consistently for arena.c and any
-  translation unit including "arena.h" when noted):
+  translation unit including <jsonrpc/arena.h> when noted):
 
         ```
         // Optional allocator hooks for arena.c
@@ -228,7 +228,7 @@ QUICK USAGE:
         ```
   This evaluates to C23 alignof(type).
 
-  Include `#include "arena.h"` in any translation unit that needs the API.
+  Include `#include <jsonrpc/arena.h>` in any translation unit that needs the API.
 */
 
 #ifndef ARENA_H

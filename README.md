@@ -62,10 +62,10 @@ Minimal JSON-RPC 2.0 server skeleton written in strict C23 with a libuv TCP tran
 ## Project Layout
 
 - `src/main.c` — wires CLI args, signal handling, and application callbacks.
-- `src/server.c` / `src/server.h` — libuv server setup, connection lifecycle, and transport glue.
-- `src/jsonrpc.c` / `src/jsonrpc.h` — JSON-RPC protocol handling and callback surfaces.
-- `src/parson.c` / `src/parson.h` — embedded JSON parser.
-- `src/arena.c` / `src/arena.h` — small arena allocator used by the protocol layer.
+- `src/server.c` / `include/jsonrpc/server.h` — libuv server setup, connection lifecycle, and transport glue.
+- `src/jsonrpc.c` / `include/jsonrpc/jsonrpc.h` — JSON-RPC protocol handling and callback surfaces.
+- `src/parson.c` / `include/jsonrpc/parson.h` — embedded JSON parser.
+- `src/arena.c` / `include/jsonrpc/arena.h` — small arena allocator used by the protocol layer.
 - `tools/bench_rps.c` — JSON-RPC benchmark client.
 - `build.zig` — Zig build graph, compiler flags (`-std=c23 -Wall -Wextra -Wpedantic -Werror`), and sanitizer toggles.
 - `justfile` — helper tasks for build, run, deps, format, and leak checks.

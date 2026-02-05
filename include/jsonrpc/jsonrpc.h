@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "parson.h"
+#include <jsonrpc/parson.h>
 
 typedef struct jsonrpc_transport_s {
   void *user_data;

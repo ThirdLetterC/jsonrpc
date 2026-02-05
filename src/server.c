@@ -8,8 +8,8 @@
 
 #include <uv.h>
 
-#include "jsonrpc.h"
-#include "server.h"
+#include <jsonrpc/jsonrpc.h>
+#include <jsonrpc/server.h>
 
 constexpr size_t READ_CHUNK_MIN = 1'024;
 constexpr size_t READ_CHUNK_MAX = 4'096;

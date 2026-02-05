@@ -1,7 +1,7 @@
 #ifndef SERVER_H
 #define SERVER_H
 
-#include "jsonrpc.h"
+#include <jsonrpc/jsonrpc.h>
 #include <stdint.h>
 
 void server_set_callbacks(jsonrpc_callbacks_t callbacks);

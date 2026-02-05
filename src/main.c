@@ -8,8 +8,8 @@
 #include <string.h>
 #include <uv.h>
 
-#include "jsonrpc.h"
-#include "server.h"
+#include <jsonrpc/jsonrpc.h>
+#include <jsonrpc/server.h>
 
 constexpr int32_t JSONRPC_ERR_INVALID_PARAMS = -32'602;
 constexpr int32_t JSONRPC_ERR_INTERNAL = -32'603;

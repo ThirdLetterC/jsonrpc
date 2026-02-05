@@ -99,8 +99,8 @@ fn addServerExecutable(
         .flags = c_flags,
     });
 
-    // Include the current directory for headers
-    exe.addIncludePath(b.path("src"));
+    // Include the public headers
+    exe.addIncludePath(b.path("include"));
 
     // Link against system libuv
     // This requires libuv headers and libraries to be in standard system paths.
@@ -152,7 +152,7 @@ fn addBenchExecutable(
         .flags = c_flags,
     });
 
-    exe.addIncludePath(b.path("src"));
+    exe.addIncludePath(b.path("include"));
     exe.linkSystemLibrary("uv");
     exe.linkLibC();
 

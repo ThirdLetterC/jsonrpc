@@ -3,9 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "arena.h"
+#include <jsonrpc/arena.h>
 
-#include "jsonrpc.h"
+#include <jsonrpc/jsonrpc.h>
 
 constexpr size_t INITIAL_BUFFER_CAP = 4'096;
 constexpr size_t MAX_MESSAGE_BYTES = 65'536U; // 64 KiB per JSON-RPC message

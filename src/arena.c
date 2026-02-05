@@ -191,7 +191,7 @@
    Copyright 2024 Carter Dugan
 */
 
-#include "arena.h"
+#include <jsonrpc/arena.h>
 
 #ifndef ARENA_DEFAULT_ALIGNMENT
 #define ARENA_DEFAULT_ALIGNMENT ARENA_ALIGNOF(size_t)

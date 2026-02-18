@@ -231,8 +231,7 @@ QUICK USAGE:
   Include `#include <jsonrpc/arena.h>` in any translation unit that needs the API.
 */
 
-#ifndef ARENA_H
-#define ARENA_H
+#pragma once
 
 #include <stdalign.h>
 #include <stddef.h>
@@ -429,5 +428,3 @@ Parameters:
 void arena_delete_allocation_list(Arena *arena);
 
 #endif /* ARENA_DEBUG */
-
-#endif /* ARENA_H */

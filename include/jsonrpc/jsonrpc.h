@@ -1,5 +1,4 @@
-#ifndef JSONRPC_H
-#define JSONRPC_H
+#pragma once
 
 #include <stddef.h>
 #include <stdint.h>
@@ -61,5 +60,3 @@ void jsonrpc_conn_feed(jsonrpc_conn_t *conn, const uint8_t *data, size_t len);
                                            const char *message);
 
 [[nodiscard]] void *jsonrpc_conn_get_context(jsonrpc_conn_t *conn);
-
-#endif // JSONRPC_H

@@ -16,3 +16,5 @@ massif.out.*
 a
 
 tools/bench_rps
+
+_codeql_detected_source_root

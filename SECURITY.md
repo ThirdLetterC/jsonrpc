@@ -41,8 +41,10 @@ Defensive posture:
 - Error handling avoids inconsistent partial state:
   - Failed send/build/parse paths clean up allocated JSON values.
   - Connection teardown frees protocol state, inbound buffers, and arena resources.
+  - Connection teardown requested inside callbacks is deferred until callback unwind, preventing callback-triggered use-after-free during dispatch.
 - TCP lifecycle guards:
   - Writes validate null/length/size bounds before allocation and `uv_write`.
+  - Transport write/allocation failures are fail-closed and trigger connection close.
   - Read callbacks close the connection on libuv read errors.
   - `SIGPIPE` is ignored so peer disconnects do not terminate the process during writes.
 
@@ -68,4 +70,6 @@ Build hardening and verification posture:
 - Debug sanitizer support is available via Zig build option:
   - `zig build -Dsanitizers=true` enables AddressSanitizer, UndefinedBehaviorSanitizer, and LeakSanitizer for Debug builds.
 - Valgrind workflow is provided (`zig build valgrind`, `just check-leaks`) for memory-leak and lifetime checks.
-- Current build scripts do not universally enforce additional linker hardening flags such as RELRO/now, PIE, stack protector, or `_FORTIFY_SOURCE`; add them explicitly for hardened production distributions.
+- Hardened non-Debug builds enable stack protector and fortified libc checks:
+  - Compile-time flags include `-fstack-protector-strong`, `_FORTIFY_SOURCE=3`, and `-fPIE`.
+- Hardened non-Debug linking enables PIE and RELRO behavior (`pie`, `link_z_relro`, non-lazy relocations).

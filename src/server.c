@@ -8,8 +8,8 @@
 
 #include <uv.h>
 
-#include <jsonrpc/jsonrpc.h>
-#include <jsonrpc/server.h>
+#include "jsonrpc/jsonrpc.h"
+#include "jsonrpc/server.h"
 
 constexpr size_t READ_CHUNK_MIN = 1'024;
 constexpr size_t READ_CHUNK_MAX = 4'096;
@@ -19,6 +19,7 @@ static uv_tcp_t g_server;
 static bool g_shutdown_requested = false;
 
 static void on_uv_client_closed(uv_handle_t *handle);
+static void transport_close(jsonrpc_transport_t *self);
 
 static void close_handle(uv_handle_t *handle, void *arg [[maybe_unused]]) {
   if (!uv_is_closing(handle)) {
@@ -32,6 +33,7 @@ static void close_handle(uv_handle_t *handle, void *arg [[maybe_unused]]) {
 
 typedef struct {
   uv_write_t req;
+  jsonrpc_transport_t *transport;
   uint8_t data[];
 } write_ctx_t;
 
@@ -67,33 +69,39 @@ void server_request_shutdown() {
 
 [[nodiscard]] jsonrpc_callbacks_t server_get_callbacks() { return g_callbacks; }
 
-static void on_uv_write(uv_write_t *req, int status [[maybe_unused]]) {
-  auto ctx = (write_ctx_t *)req;
-  free(ctx);
+static void on_uv_write(uv_write_t *req, int status) {
+  auto write_ctx = (write_ctx_t *)req;
+  jsonrpc_transport_t *transport =
+      write_ctx != nullptr ? write_ctx->transport : nullptr;
+  free(write_ctx);
+
+  if (status < 0 && transport != nullptr && transport->close != nullptr) {
+    fprintf(stderr, "uv_write callback failed: %s\n", uv_strerror(status));
+    transport->close(transport);
+  }
 }
 
-static void transport_send_raw(jsonrpc_transport_t *self, const uint8_t *data,
-                               size_t len) {
+[[nodiscard]] static bool transport_send_raw(jsonrpc_transport_t *self,
+                                             const uint8_t *data, size_t len) {
   if (self == nullptr || data == nullptr || len == 0U) {
-    return;
+    return false;
   }
-  if (len > (size_t)UINT_MAX) {
-    return;
-  }
-
   auto ctx = (client_ctx_t *)self->user_data;
   if (ctx == nullptr || uv_is_closing((uv_handle_t *)&ctx->tcp)) {
-    return;
+    return false;
   }
 
-  if (len > SIZE_MAX - sizeof(write_ctx_t)) {
-    return;
+  if (len > (size_t)UINT_MAX || len > SIZE_MAX - sizeof(write_ctx_t)) {
+    transport_close(self);
+    return false;
   }
   const size_t alloc_size = sizeof(write_ctx_t) + len;
   auto write_ctx = (write_ctx_t *)calloc(1, alloc_size);
   if (write_ctx == nullptr) {
-    return;
+    transport_close(self);
+    return false;
   }
+  write_ctx->transport = &ctx->transport;
 
   memcpy(write_ctx->data, data, len);
 
@@ -103,7 +111,10 @@ static void transport_send_raw(jsonrpc_transport_t *self, const uint8_t *data,
   if (write_status != 0) {
     fprintf(stderr, "uv_write failed: %s\n", uv_strerror(write_status));
     free(write_ctx);
+    transport_close(self);
+    return false;
   }
+  return true;
 }
 
 static void on_uv_client_closed(uv_handle_t *handle) {
@@ -154,6 +165,12 @@ static void on_uv_alloc(uv_handle_t *handle, size_t suggested_size,
 
     ctx->read_buffer = (uint8_t *)calloc(alloc_size, sizeof(uint8_t));
     ctx->read_capacity = ctx->read_buffer == nullptr ? 0U : alloc_size;
+    if (ctx->read_buffer == nullptr) {
+      buf->base = nullptr;
+      buf->len = 0U;
+      transport_close(&ctx->transport);
+      return;
+    }
   }
   buf->base = (char *)ctx->read_buffer;
   buf->len = (unsigned int)ctx->read_capacity;

@@ -10,6 +10,7 @@ const common_flags = &[_][]const u8{
     "-std=c23",
     "-D_GNU_SOURCE",
     "-DARENA_DEFAULT_ALIGNMENT=alignof(max_align_t)",
+    "-fstack-protector-strong",
 };
 
 const debug_flags = &[_][]const u8{
@@ -22,10 +23,45 @@ const debug_flags = &[_][]const u8{
     "-std=c23",
     "-D_GNU_SOURCE",
     "-DARENA_DEFAULT_ALIGNMENT=alignof(max_align_t)",
+    "-fstack-protector-strong",
     "-fsanitize=address",
     "-fsanitize=undefined",
     "-fsanitize=leak",
 };
+
+const hardened_release_flags = &[_][]const u8{
+    "-march=x86-64",
+    "-mtune=generic",
+    "-Wall",
+    "-Wextra",
+    "-Wpedantic",
+    "-Werror",
+    "-std=c23",
+    "-D_GNU_SOURCE",
+    "-DARENA_DEFAULT_ALIGNMENT=alignof(max_align_t)",
+    "-fstack-protector-strong",
+    "-D_FORTIFY_SOURCE=3",
+    "-fPIE",
+};
+
+fn selectedCFlags(use_sanitizers: bool, optimize: std.builtin.OptimizeMode) []const []const u8 {
+    if (use_sanitizers) {
+        return debug_flags;
+    }
+    if (optimize == .Debug) {
+        return common_flags;
+    }
+    return hardened_release_flags;
+}
+
+fn applyReleaseHardening(exe: *std.Build.Step.Compile, optimize: std.builtin.OptimizeMode) void {
+    if (optimize == .Debug) {
+        return;
+    }
+    exe.pie = true;
+    exe.link_z_relro = true;
+    exe.link_z_lazy = false;
+}
 
 fn findSanitizerLib(b: *std.Build, name: []const u8) ?[]const u8 {
     const lib_dirs = &[_][]const u8{
@@ -76,7 +112,7 @@ fn addServerExecutable(
     enable_sanitizers: bool,
 ) *std.Build.Step.Compile {
     const use_sanitizers = enable_sanitizers and optimize == .Debug;
-    const c_flags = if (use_sanitizers) debug_flags else common_flags;
+    const c_flags = selectedCFlags(use_sanitizers, optimize);
 
     const exe = b.addExecutable(.{
         .name = "jsonrpc_server",
@@ -108,6 +144,7 @@ fn addServerExecutable(
 
     // Link against the C standard library
     exe.linkLibC();
+    applyReleaseHardening(exe, optimize);
 
     if (optimize != .Debug) {
         exe.root_module.strip = true;
@@ -133,7 +170,7 @@ fn addBenchExecutable(
     enable_sanitizers: bool,
 ) *std.Build.Step.Compile {
     const use_sanitizers = enable_sanitizers and optimize == .Debug;
-    const c_flags = if (use_sanitizers) debug_flags else common_flags;
+    const c_flags = selectedCFlags(use_sanitizers, optimize);
 
     const exe = b.addExecutable(.{
         .name = "bench_rps",
@@ -155,6 +192,7 @@ fn addBenchExecutable(
     exe.addIncludePath(b.path("include"));
     exe.linkSystemLibrary("uv");
     exe.linkLibC();
+    applyReleaseHardening(exe, optimize);
 
     if (optimize != .Debug) {
         exe.root_module.strip = true;

@@ -25,13 +25,6 @@
 
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-#if 0
-} /* unconfuse xcode */
-#endif
-
 #include <stddef.h> /* size_t */
 #include <stdint.h>
 

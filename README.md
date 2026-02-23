@@ -29,6 +29,7 @@ Minimal JSON-RPC 2.0 server skeleton written in strict C23 with a libuv TCP tran
 - Default debug build: `just build` or `zig build`.
 - Release build: `zig build release` (override with `-Drelease_mode=ReleaseSafe|ReleaseFast|ReleaseSmall`).
 - Standard optimize path: `zig build -Doptimize=ReleaseSafe` (or `ReleaseFast`/`ReleaseSmall`).
+- Non-Debug builds enable hardening flags (`-fstack-protector-strong`, `_FORTIFY_SOURCE=3`, `-fPIE`) and RELRO/PIE linker posture.
 - Address/UB/leak sanitizers (Debug only): `zig build -Dsanitizers=true`.
 - Benchmark tool (`bench_rps`) is installed to `zig-out/bin/bench_rps` by `zig build`.
 

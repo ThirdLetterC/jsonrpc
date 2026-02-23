@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <stddef.h>
@@ -13,7 +14,7 @@
 
 #include <uv.h>
 
-#include <jsonrpc/parson.h>
+#include "jsonrpc/parson.h"
 
 constexpr int32_t DEFAULT_PORT = 8080;
 constexpr int32_t DEFAULT_CONNECTIONS = 50;
@@ -94,7 +95,8 @@ static void print_usage(FILE *out, const char *program) {
           "  --port <port>         Server port (default: 8080)\n"
           "  --connections <n>     Parallel TCP connections (default: 50)\n"
           "  --duration <sec>      Benchmark duration in seconds (default: 5)\n"
-          "  --timeout <sec>       Per-request read timeout in seconds (default: 5)\n"
+          "  --timeout <sec>       Per-request read timeout in seconds "
+          "(default: 5)\n"
           "  --method <name>       JSON-RPC method (default: ping)\n"
           "  --params <json>       Optional JSON params (array or object)\n"
           "  --help                Show this help\n",
@@ -255,6 +257,13 @@ static void bench_options_init(bench_options_t *options) {
     return false;
   }
 
+  if ((size_t)result->ai_addrlen > sizeof(*out) ||
+      result->ai_addrlen > (socklen_t)INT_MAX) {
+    fprintf(stderr, "resolve failed: resolved address too large\n");
+    freeaddrinfo(result);
+    return false;
+  }
+
   memcpy(out, result->ai_addr, result->ai_addrlen);
   *out_len = (int)result->ai_addrlen;
   freeaddrinfo(result);
@@ -275,8 +284,7 @@ static void bench_options_init(bench_options_t *options) {
   return (uint64_t)ms;
 }
 
-[[nodiscard]] static bool build_request(owned_buffer_t *out,
-                                        const char *method,
+[[nodiscard]] static bool build_request(owned_buffer_t *out, const char *method,
                                         const JSON_Value *params_value,
                                         uint64_t request_id) {
   if (out == nullptr || method == nullptr) {
@@ -295,8 +303,7 @@ static void bench_options_init(bench_options_t *options) {
   }
 
   if (json_object_set_string(object, "jsonrpc", "2.0") != JSONSuccess ||
-      json_object_set_number(object, "id", (double)request_id) !=
-          JSONSuccess ||
+      json_object_set_number(object, "id", (double)request_id) != JSONSuccess ||
       json_object_set_string(object, "method", method) != JSONSuccess) {
     json_value_free(root);
     return false;
@@ -417,13 +424,11 @@ static bool conn_consume_lines(bench_conn_t *conn) {
   }
   bool got_response = false;
   while (conn->recv_len > 0U) {
-    uint8_t *newline =
-        (uint8_t *)memchr(conn->recv_buf, '\n', conn->recv_len);
+    uint8_t *newline = (uint8_t *)memchr(conn->recv_buf, '\n', conn->recv_len);
     if (newline == nullptr) {
       break;
     }
-    const size_t line_len =
-        (size_t)(newline - (uint8_t *)conn->recv_buf);
+    const size_t line_len = (size_t)(newline - (uint8_t *)conn->recv_buf);
     const size_t remaining = conn->recv_len - line_len - 1U;
     if (remaining > 0U) {
       memmove(conn->recv_buf, conn->recv_buf + line_len + 1U, remaining);
@@ -568,6 +573,12 @@ static void conn_send_next(bench_conn_t *conn) {
   write_ctx->conn = conn;
   write_ctx->payload = request.data;
   write_ctx->len = request.len;
+  if (write_ctx->len > (size_t)UINT_MAX) {
+    free(write_ctx->payload);
+    free(write_ctx);
+    conn_fail(conn, "request too large");
+    return;
+  }
 
   uv_buf_t buf = uv_buf_init(write_ctx->payload, (unsigned int)write_ctx->len);
   conn->write_inflight = true;
@@ -581,8 +592,7 @@ static void conn_send_next(bench_conn_t *conn) {
   }
 }
 
-static void on_alloc(uv_handle_t *handle, size_t suggested,
-                     uv_buf_t *buf) {
+static void on_alloc(uv_handle_t *handle, size_t suggested, uv_buf_t *buf) {
   (void)suggested;
   bench_conn_t *conn = (bench_conn_t *)handle->data;
   if (conn == nullptr || conn->read_chunk == nullptr) {
@@ -594,8 +604,7 @@ static void on_alloc(uv_handle_t *handle, size_t suggested,
   buf->len = (unsigned int)conn->read_chunk_cap;
 }
 
-static void on_read(uv_stream_t *stream, ssize_t nread,
-                    const uv_buf_t *buf) {
+static void on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
   bench_conn_t *conn = (bench_conn_t *)stream->data;
   if (conn == nullptr || conn->closing) {
     return;
@@ -754,8 +763,7 @@ int main(int argc, char **argv) {
   }
 
   const size_t conn_count = (size_t)options.connections;
-  ctx.connections =
-      (bench_conn_t *)calloc(conn_count, sizeof(bench_conn_t));
+  ctx.connections = (bench_conn_t *)calloc(conn_count, sizeof(bench_conn_t));
   if (ctx.connections == nullptr) {
     fprintf(stderr, "failed to allocate connections\n");
     uv_loop_close(&ctx.loop);
@@ -782,9 +790,9 @@ int main(int argc, char **argv) {
     }
 
     conn->connect_req.data = conn;
-    const int rc = uv_tcp_connect(&conn->connect_req, &conn->tcp,
-                                  (const struct sockaddr *)&ctx.addr,
-                                  on_connect);
+    const int rc =
+        uv_tcp_connect(&conn->connect_req, &conn->tcp,
+                       (const struct sockaddr *)&ctx.addr, on_connect);
     if (rc != 0) {
       fprintf(stderr, "connection %" PRId32 ": connect failed: %s\n",
               conn->index, uv_strerror(rc));
@@ -820,8 +828,7 @@ int main(int argc, char **argv) {
     total += ctx.connections[i].responses;
   }
 
-  const double elapsed_sec =
-      (double)(ctx.end_ns - ctx.start_ns) / NS_PER_SEC;
+  const double elapsed_sec = (double)(ctx.end_ns - ctx.start_ns) / NS_PER_SEC;
   const double rps = elapsed_sec > 0.0 ? (double)total / elapsed_sec : 0.0;
 
   printf("connections=%" PRId32 "\n", options.connections);

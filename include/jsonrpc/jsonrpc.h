@@ -3,11 +3,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <jsonrpc/parson.h>
+#include "jsonrpc/parson.h"
 
 typedef struct jsonrpc_transport_s {
   void *user_data;
-  void (*send_raw)(struct jsonrpc_transport_s *self, const uint8_t *data,
+  /**
+   * @brief Send raw bytes over the transport.
+   * @return true when the write is accepted by the transport, false on failure.
+   *         The buffer is only guaranteed to remain valid for the duration of
+   *         the call.
+   */
+  bool (*send_raw)(struct jsonrpc_transport_s *self, const uint8_t *data,
                    size_t len);
   void (*close)(struct jsonrpc_transport_s *self);
 } jsonrpc_transport_t;

@@ -1,7 +1,8 @@
 #pragma once
 
-#include <jsonrpc/jsonrpc.h>
 #include <stdint.h>
+
+#include "jsonrpc/jsonrpc.h"
 
 void server_set_callbacks(jsonrpc_callbacks_t callbacks);
 [[nodiscard]] jsonrpc_callbacks_t server_get_callbacks();

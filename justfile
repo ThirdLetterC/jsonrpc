@@ -27,8 +27,7 @@ deps-brew:
 
 # Check C code for memory leaks using Valgrind (Linux only)
 check-leaks:
-	zig build -Dcpu=x86_64_v2
-	valgrind --leak-check=full --show-leak-kinds=all ./zig-out/bin/jsonrpc_server {{port}}
+	zig build valgrind -- {{port}}
 
 # Test the JSON-RPC connection using netcat
 test-client:

@@ -220,6 +220,15 @@ void arena_init(Arena *arena, void *region, size_t size) {
     return;
   }
 
+  arena->region = nullptr;
+  arena->index = 0;
+  arena->size = 0;
+
+#ifdef ARENA_DEBUG
+  arena->allocations = 0;
+  arena->head_allocation = nullptr;
+#endif /* ARENA_DEBUG */
+
   const bool has_region = region != nullptr;
   const bool has_size = size != 0;
   if (has_region != has_size) {
@@ -227,13 +236,7 @@ void arena_init(Arena *arena, void *region, size_t size) {
   }
 
   arena->region = (char *)region;
-  arena->index = 0;
   arena->size = size;
-
-#ifdef ARENA_DEBUG
-  arena->allocations = 0;
-  arena->head_allocation = nullptr;
-#endif /* ARENA_DEBUG */
 }
 
 Arena *arena_create(size_t size) {

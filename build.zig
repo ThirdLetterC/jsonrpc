@@ -209,6 +209,48 @@ fn addBenchExecutable(
     return exe;
 }
 
+fn addTestsExecutable(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    enable_sanitizers: bool,
+) *std.Build.Step.Compile {
+    const use_sanitizers = enable_sanitizers and optimize == .Debug;
+    const c_flags = selectedCFlags(use_sanitizers, optimize);
+
+    const exe = b.addExecutable(.{
+        .name = "jsonrpc_tests",
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    exe.addCSourceFiles(.{
+        .root = b.path("."),
+        .files = &.{
+            "testing/tests.c",
+            "src/jsonrpc.c",
+            "src/arena.c",
+            "src/parson.c",
+        },
+        .flags = c_flags,
+    });
+
+    exe.addIncludePath(b.path("include"));
+    exe.linkLibC();
+
+    if (use_sanitizers) {
+        exe.bundle_compiler_rt = true;
+        exe.bundle_ubsan_rt = true;
+        linkSanitizerLib(exe, b, "asan");
+        linkSanitizerLib(exe, b, "ubsan");
+        linkSanitizerLib(exe, b, "lsan");
+    }
+
+    return exe;
+}
+
 pub fn build(b: *std.Build) void {
     const force_valgrind = b.option(
         bool,
@@ -284,6 +326,11 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run the JSON-RPC server");
     run_step.dependOn(&run_cmd.step);
+
+    const tests_exe = addTestsExecutable(b, target, optimize, enable_sanitizers);
+    const test_cmd = b.addRunArtifact(tests_exe);
+    const test_step = b.step("test", "Build and run unit tests");
+    test_step.dependOn(&test_cmd.step);
 
     const valgrind_exe = addServerExecutable(b, valgrind_target, .Debug, false);
     const valgrind_cmd = b.addSystemCommand(&.{

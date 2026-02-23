@@ -727,6 +727,10 @@ int main(int argc, char **argv) {
     fprintf(stderr, "--connections must be > 0\n");
     return 2;
   }
+  if (options.port <= 0 || options.port > UINT16_MAX) {
+    fprintf(stderr, "--port must be in range 1..65535\n");
+    return 2;
+  }
   if (options.duration_sec <= 0.0) {
     fprintf(stderr, "--duration must be > 0\n");
     return 2;

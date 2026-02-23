@@ -775,6 +775,16 @@ void jsonrpc_conn_feed(jsonrpc_conn_t *conn, const uint8_t *data, size_t len) {
     line[line_len] = '\0';
     rpc_buffer_consume(&conn->inbound, consume_len);
 
+    if (memchr(line, '\0', line_len) != nullptr) {
+      const bool sent =
+          jsonrpc_conn_send_error(conn, nullptr, JSONRPC_ERR_PARSE, nullptr);
+      if (!sent && conn->transport.close != nullptr) {
+        conn->transport.close(&conn->transport);
+        close_connection = true;
+      }
+      goto cleanup_message;
+    }
+
     request = json_parse_string(line);
     jsonrpc_arena_free(line);
 

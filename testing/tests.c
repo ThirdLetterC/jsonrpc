@@ -3,14 +3,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "jsonrpc/arena.h"
 #include "jsonrpc/jsonrpc.h"
 
 constexpr int32_t JSONRPC_ERR_PARSE = -32'700;
 constexpr int32_t JSONRPC_ERR_INVALID_REQUEST = -32'600;
 constexpr int32_t JSONRPC_ERR_METHOD_NOT_FOUND = -32'601;
 constexpr int32_t JSONRPC_ERR_INVALID_PARAMS = -32'602;
+constexpr int32_t JSONRPC_ERR_INTERNAL = -32'603;
 
 constexpr size_t TEST_MAX_MESSAGES = 32U;
+constexpr size_t JSONRPC_MAX_MESSAGE_BYTES = 65'536U;
+constexpr size_t JSONRPC_MAX_BUFFER_BYTES = 131'072U;
 
 typedef struct {
   char *messages[TEST_MAX_MESSAGES];
@@ -100,6 +104,10 @@ static void on_open(jsonrpc_conn_t *conn) {
   context->callback_state.open_count += 1U;
 }
 
+static void on_open_close_immediately(jsonrpc_conn_t *conn) {
+  jsonrpc_conn_free(conn);
+}
+
 static void on_close(jsonrpc_conn_t *conn) {
   (void)conn;
   if (g_active_test_context == nullptr) {
@@ -123,6 +131,24 @@ static bool on_request(jsonrpc_conn_t *conn, const char *method,
   if (strcmp(method, "ping") == 0) {
     response->result = json_value_init_string("pong");
     return response->result != nullptr;
+  }
+  if (strcmp(method, "raise") == 0) {
+    response->error_code = JSONRPC_ERR_INTERNAL;
+    response->error_message = "boom";
+    return true;
+  }
+  if (strcmp(method, "raise_default") == 0) {
+    response->error_code = JSONRPC_ERR_INTERNAL;
+    response->error_message = nullptr;
+    return true;
+  }
+  if (strcmp(method, "no_result") == 0) {
+    return true;
+  }
+  if (strcmp(method, "close_with_result") == 0) {
+    response->result = json_value_init_string("ignored");
+    jsonrpc_conn_free(conn);
+    return true;
   }
 
   return false;
@@ -152,6 +178,17 @@ static void on_notification(jsonrpc_conn_t *conn, const char *method,
                                    .on_request = on_request,
                                    .on_notification = on_notification};
 
+  return jsonrpc_conn_new(transport, callbacks, context);
+}
+
+[[nodiscard]] static jsonrpc_conn_t *
+test_conn_new_with_callbacks(test_context_t *context, jsonrpc_callbacks_t callbacks) {
+  if (context == nullptr) {
+    return nullptr;
+  }
+  jsonrpc_transport_t transport = {.user_data = &context->transport_state,
+                                   .send_raw = test_send_raw,
+                                   .close = test_close};
   return jsonrpc_conn_new(transport, callbacks, context);
 }
 
@@ -414,6 +451,349 @@ static bool test_send_failure_triggers_transport_close() {
   return true;
 }
 
+static bool test_invalid_request_shapes() {
+  test_context_t context = {0};
+  g_active_test_context = &context;
+  auto conn = test_conn_new(&context);
+  ASSERT_TRUE(conn != nullptr);
+
+  const char *wrong_version =
+      "{\"jsonrpc\":\"1.0\",\"id\":1,\"method\":\"ping\"}\n";
+  const char *missing_method = "{\"jsonrpc\":\"2.0\",\"id\":2}\n";
+  const char *bad_id_type =
+      "{\"jsonrpc\":\"2.0\",\"id\":{},\"method\":\"ping\"}\n";
+  const char *top_level_scalar = "42\n";
+
+  jsonrpc_conn_feed(conn, (const uint8_t *)wrong_version, strlen(wrong_version));
+  jsonrpc_conn_feed(conn, (const uint8_t *)missing_method, strlen(missing_method));
+  jsonrpc_conn_feed(conn, (const uint8_t *)bad_id_type, strlen(bad_id_type));
+  jsonrpc_conn_feed(conn, (const uint8_t *)top_level_scalar, strlen(top_level_scalar));
+
+  ASSERT_TRUE(context.transport_state.message_count == 4U);
+  ASSERT_TRUE(context.callback_state.request_count == 0U);
+
+  auto first = test_parse_sent_json(&context.transport_state, 0U);
+  ASSERT_TRUE(first != nullptr);
+  auto first_error = json_object_get_object(json_value_get_object(first), "error");
+  ASSERT_TRUE((int32_t)json_object_get_number(first_error, "code") ==
+              JSONRPC_ERR_INVALID_REQUEST);
+  ASSERT_TRUE(json_object_get_number(json_value_get_object(first), "id") == 1.0);
+  json_value_free(first);
+
+  auto second = test_parse_sent_json(&context.transport_state, 1U);
+  ASSERT_TRUE(second != nullptr);
+  auto second_error =
+      json_object_get_object(json_value_get_object(second), "error");
+  ASSERT_TRUE((int32_t)json_object_get_number(second_error, "code") ==
+              JSONRPC_ERR_INVALID_REQUEST);
+  ASSERT_TRUE(json_object_get_number(json_value_get_object(second), "id") == 2.0);
+  json_value_free(second);
+
+  auto third = test_parse_sent_json(&context.transport_state, 2U);
+  ASSERT_TRUE(third != nullptr);
+  auto third_obj = json_value_get_object(third);
+  auto third_id = json_object_get_value(third_obj, "id");
+  ASSERT_TRUE(third_id != nullptr);
+  ASSERT_TRUE(json_value_get_type(third_id) == JSONNull);
+  json_value_free(third);
+
+  auto fourth = test_parse_sent_json(&context.transport_state, 3U);
+  ASSERT_TRUE(fourth != nullptr);
+  auto fourth_error =
+      json_object_get_object(json_value_get_object(fourth), "error");
+  ASSERT_TRUE((int32_t)json_object_get_number(fourth_error, "code") ==
+              JSONRPC_ERR_INVALID_REQUEST);
+  json_value_free(fourth);
+
+  jsonrpc_conn_free(conn);
+  test_transport_state_reset(&context.transport_state);
+  g_active_test_context = nullptr;
+  return true;
+}
+
+static bool test_batch_edge_cases() {
+  test_context_t context = {0};
+  g_active_test_context = &context;
+  auto conn = test_conn_new(&context);
+  ASSERT_TRUE(conn != nullptr);
+
+  const char *empty_batch = "[]\n";
+  const char *notifications_only =
+      "[{\"jsonrpc\":\"2.0\",\"method\":\"n1\"},"
+      "{\"jsonrpc\":\"2.0\",\"method\":\"n2\"}]\n";
+  jsonrpc_conn_feed(conn, (const uint8_t *)empty_batch, strlen(empty_batch));
+  jsonrpc_conn_feed(conn, (const uint8_t *)notifications_only,
+                    strlen(notifications_only));
+
+  ASSERT_TRUE(context.transport_state.message_count == 1U);
+  ASSERT_TRUE(context.callback_state.notification_count == 2U);
+
+  auto response = test_parse_sent_json(&context.transport_state, 0U);
+  ASSERT_TRUE(response != nullptr);
+  auto error_obj = json_object_get_object(json_value_get_object(response), "error");
+  ASSERT_TRUE((int32_t)json_object_get_number(error_obj, "code") ==
+              JSONRPC_ERR_INVALID_REQUEST);
+  json_value_free(response);
+
+  jsonrpc_conn_free(conn);
+  test_transport_state_reset(&context.transport_state);
+  g_active_test_context = nullptr;
+  return true;
+}
+
+static bool test_framing_and_embedded_nul_parse_error() {
+  test_context_t context = {0};
+  g_active_test_context = &context;
+  auto conn = test_conn_new(&context);
+  ASSERT_TRUE(conn != nullptr);
+
+  const char *blank_line = "\r\n";
+  const char *ping_crlf = "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"ping\"}\r\n";
+  const uint8_t embedded_nul[] = {'{', '"', 'j', 's', 'o', 'n', 'r', 'p',
+                                  'c', '"', ':', '"', '2', '.', '0', '"',
+                                  ',', '"', 'i', 'd', '"', ':', '1', '2',
+                                  ',', '"', 'm', 'e', 't', 'h', 'o', 'd',
+                                  '"', ':', '"', 'p', 'i', 'n', 'g', '"',
+                                  '}', '\0', '\n'};
+
+  jsonrpc_conn_feed(conn, (const uint8_t *)blank_line, strlen(blank_line));
+  jsonrpc_conn_feed(conn, (const uint8_t *)ping_crlf, strlen(ping_crlf));
+  jsonrpc_conn_feed(conn, embedded_nul, sizeof(embedded_nul));
+
+  ASSERT_TRUE(context.transport_state.message_count == 2U);
+
+  auto ok = test_parse_sent_json(&context.transport_state, 0U);
+  ASSERT_TRUE(ok != nullptr);
+  ASSERT_TRUE(json_object_get_number(json_value_get_object(ok), "id") == 11.0);
+  json_value_free(ok);
+
+  auto parse_err = test_parse_sent_json(&context.transport_state, 1U);
+  ASSERT_TRUE(parse_err != nullptr);
+  auto error_obj = json_object_get_object(json_value_get_object(parse_err), "error");
+  ASSERT_TRUE((int32_t)json_object_get_number(error_obj, "code") ==
+              JSONRPC_ERR_PARSE);
+  json_value_free(parse_err);
+
+  jsonrpc_conn_free(conn);
+  test_transport_state_reset(&context.transport_state);
+  g_active_test_context = nullptr;
+  return true;
+}
+
+static bool test_request_too_large_closes_connection() {
+  test_context_t context = {0};
+  g_active_test_context = &context;
+  auto conn = test_conn_new(&context);
+  ASSERT_TRUE(conn != nullptr);
+
+  const size_t line_len = JSONRPC_MAX_MESSAGE_BYTES + 1U;
+  auto payload = (uint8_t *)calloc(line_len + 1U, sizeof(uint8_t));
+  ASSERT_TRUE(payload != nullptr);
+  memset(payload, 'a', line_len);
+  payload[line_len] = '\n';
+
+  jsonrpc_conn_feed(conn, payload, line_len + 1U);
+  free(payload);
+
+  ASSERT_TRUE(context.transport_state.close_calls >= 1U);
+  ASSERT_TRUE(context.transport_state.message_count == 1U);
+
+  auto response = test_parse_sent_json(&context.transport_state, 0U);
+  ASSERT_TRUE(response != nullptr);
+  auto error_obj = json_object_get_object(json_value_get_object(response), "error");
+  ASSERT_TRUE((int32_t)json_object_get_number(error_obj, "code") ==
+              JSONRPC_ERR_INVALID_REQUEST);
+  ASSERT_TRUE(strcmp(json_object_get_string(error_obj, "message"),
+                     "Request too large") == 0);
+  json_value_free(response);
+
+  ASSERT_TRUE(jsonrpc_conn_get_context(conn) == &context);
+  jsonrpc_conn_free(conn);
+  test_transport_state_reset(&context.transport_state);
+  g_active_test_context = nullptr;
+  return true;
+}
+
+static bool test_inbound_buffer_overflow_closes_connection() {
+  test_context_t context = {0};
+  g_active_test_context = &context;
+  auto conn = test_conn_new(&context);
+  ASSERT_TRUE(conn != nullptr);
+
+  const size_t too_big = JSONRPC_MAX_BUFFER_BYTES + 1U;
+  auto payload = (uint8_t *)calloc(too_big, sizeof(uint8_t));
+  ASSERT_TRUE(payload != nullptr);
+  memset(payload, 'x', too_big);
+
+  jsonrpc_conn_feed(conn, payload, too_big);
+  free(payload);
+
+  ASSERT_TRUE(context.transport_state.close_calls >= 1U);
+  ASSERT_TRUE(context.transport_state.message_count == 1U);
+
+  auto response = test_parse_sent_json(&context.transport_state, 0U);
+  ASSERT_TRUE(response != nullptr);
+  auto error_obj = json_object_get_object(json_value_get_object(response), "error");
+  ASSERT_TRUE((int32_t)json_object_get_number(error_obj, "code") ==
+              JSONRPC_ERR_INVALID_REQUEST);
+  ASSERT_TRUE(strcmp(json_object_get_string(error_obj, "message"),
+                     "Request too large") == 0);
+  json_value_free(response);
+
+  jsonrpc_conn_free(conn);
+  test_transport_state_reset(&context.transport_state);
+  g_active_test_context = nullptr;
+  return true;
+}
+
+static bool test_request_handler_error_paths() {
+  test_context_t context = {0};
+  g_active_test_context = &context;
+  auto conn = test_conn_new(&context);
+  ASSERT_TRUE(conn != nullptr);
+
+  const char *raise_custom = "{\"jsonrpc\":\"2.0\",\"id\":21,\"method\":\"raise\"}\n";
+  const char *raise_default =
+      "{\"jsonrpc\":\"2.0\",\"id\":22,\"method\":\"raise_default\"}\n";
+  const char *no_result = "{\"jsonrpc\":\"2.0\",\"id\":23,\"method\":\"no_result\"}\n";
+  const char *close_with_result =
+      "{\"jsonrpc\":\"2.0\",\"id\":24,\"method\":\"close_with_result\"}\n";
+
+  jsonrpc_conn_feed(conn, (const uint8_t *)raise_custom, strlen(raise_custom));
+  jsonrpc_conn_feed(conn, (const uint8_t *)raise_default, strlen(raise_default));
+  jsonrpc_conn_feed(conn, (const uint8_t *)no_result, strlen(no_result));
+  jsonrpc_conn_feed(conn, (const uint8_t *)close_with_result,
+                    strlen(close_with_result));
+
+  ASSERT_TRUE(context.transport_state.message_count == 3U);
+  ASSERT_TRUE(context.callback_state.close_count == 1U);
+
+  auto first = test_parse_sent_json(&context.transport_state, 0U);
+  ASSERT_TRUE(first != nullptr);
+  auto first_error = json_object_get_object(json_value_get_object(first), "error");
+  ASSERT_TRUE((int32_t)json_object_get_number(first_error, "code") ==
+              JSONRPC_ERR_INTERNAL);
+  ASSERT_TRUE(strcmp(json_object_get_string(first_error, "message"), "boom") == 0);
+  json_value_free(first);
+
+  auto second = test_parse_sent_json(&context.transport_state, 1U);
+  ASSERT_TRUE(second != nullptr);
+  auto second_error =
+      json_object_get_object(json_value_get_object(second), "error");
+  ASSERT_TRUE((int32_t)json_object_get_number(second_error, "code") ==
+              JSONRPC_ERR_INTERNAL);
+  ASSERT_TRUE(strcmp(json_object_get_string(second_error, "message"),
+                     "Internal error") == 0);
+  json_value_free(second);
+
+  auto third = test_parse_sent_json(&context.transport_state, 2U);
+  ASSERT_TRUE(third != nullptr);
+  auto third_error = json_object_get_object(json_value_get_object(third), "error");
+  ASSERT_TRUE((int32_t)json_object_get_number(third_error, "code") ==
+              JSONRPC_ERR_INTERNAL);
+  ASSERT_TRUE(strcmp(json_object_get_string(third_error, "message"),
+                     "Handler returned no result") == 0);
+  json_value_free(third);
+
+  test_transport_state_reset(&context.transport_state);
+  g_active_test_context = nullptr;
+  return true;
+}
+
+static bool test_no_request_callback_returns_method_not_found() {
+  test_context_t context = {0};
+  g_active_test_context = &context;
+  jsonrpc_callbacks_t callbacks = {.on_open = on_open,
+                                   .on_close = on_close,
+                                   .on_request = nullptr,
+                                   .on_notification = on_notification};
+  auto conn = test_conn_new_with_callbacks(&context, callbacks);
+  ASSERT_TRUE(conn != nullptr);
+
+  const char *request = "{\"jsonrpc\":\"2.0\",\"id\":25,\"method\":\"ping\"}\n";
+  jsonrpc_conn_feed(conn, (const uint8_t *)request, strlen(request));
+
+  ASSERT_TRUE(context.callback_state.request_count == 0U);
+  ASSERT_TRUE(context.transport_state.message_count == 1U);
+  auto response = test_parse_sent_json(&context.transport_state, 0U);
+  ASSERT_TRUE(response != nullptr);
+  auto error_obj = json_object_get_object(json_value_get_object(response), "error");
+  ASSERT_TRUE((int32_t)json_object_get_number(error_obj, "code") ==
+              JSONRPC_ERR_METHOD_NOT_FOUND);
+  json_value_free(response);
+
+  jsonrpc_conn_free(conn);
+  test_transport_state_reset(&context.transport_state);
+  g_active_test_context = nullptr;
+  return true;
+}
+
+static bool test_connection_closed_during_on_open_returns_null() {
+  test_context_t context = {0};
+  g_active_test_context = &context;
+  jsonrpc_callbacks_t callbacks = {.on_open = on_open_close_immediately,
+                                   .on_close = on_close,
+                                   .on_request = on_request,
+                                   .on_notification = on_notification};
+  auto conn = test_conn_new_with_callbacks(&context, callbacks);
+  ASSERT_TRUE(conn == nullptr);
+  ASSERT_TRUE(context.callback_state.close_count == 1U);
+  ASSERT_TRUE(context.callback_state.open_count == 0U);
+
+  test_transport_state_reset(&context.transport_state);
+  g_active_test_context = nullptr;
+  return true;
+}
+
+static bool test_arena_api_paths() {
+  Arena stack_arena = {0};
+  char region[32] = {0};
+
+  arena_init(nullptr, region, sizeof(region));
+  arena_init(&stack_arena, region, 0U);
+  ASSERT_TRUE(stack_arena.region == nullptr);
+  ASSERT_TRUE(stack_arena.size == 0U);
+
+  arena_init(&stack_arena, region, sizeof(region));
+  ASSERT_TRUE(arena_alloc(nullptr, 8U) == nullptr);
+  ASSERT_TRUE(arena_alloc(&stack_arena, 0U) == nullptr);
+  ASSERT_TRUE(arena_alloc_aligned(&stack_arena, 8U, 8U) != nullptr);
+  ASSERT_TRUE(arena_alloc_aligned(&stack_arena, 8U, 16U) != nullptr);
+  ASSERT_TRUE(arena_alloc_aligned(&stack_arena, 32U, 8U) == nullptr);
+  arena_clear(&stack_arena);
+  ASSERT_TRUE(stack_arena.index == 0U);
+  arena_clear(nullptr);
+
+  auto src = arena_create(32U);
+  auto dest = arena_create(16U);
+  ASSERT_TRUE(src != nullptr);
+  ASSERT_TRUE(dest != nullptr);
+
+  auto src_bytes = (uint8_t *)arena_alloc(src, 12U);
+  ASSERT_TRUE(src_bytes != nullptr);
+  for (size_t i = 0U; i < 12U; ++i) {
+    src_bytes[i] = (uint8_t)(i + 1U);
+  }
+
+  const size_t copied = arena_copy(dest, src);
+  ASSERT_TRUE(copied == 12U);
+  ASSERT_TRUE(dest->index == 12U);
+  ASSERT_TRUE(memcmp(dest->region, src->region, 12U) == 0);
+
+  ASSERT_TRUE(arena_copy(nullptr, src) == 0U);
+  ASSERT_TRUE(arena_copy(dest, nullptr) == 0U);
+
+  Arena invalid = {0};
+  ASSERT_TRUE(arena_copy(&invalid, src) == 0U);
+  ASSERT_TRUE(arena_copy(dest, &invalid) == 0U);
+
+  arena_destroy(src);
+  arena_destroy(dest);
+  ASSERT_TRUE(arena_create(0U) == nullptr);
+  arena_destroy(nullptr);
+  return true;
+}
+
 int main() {
   typedef struct {
     const char *name;
@@ -433,6 +813,21 @@ int main() {
        .run = test_send_result_and_send_error_api},
       {.name = "send_failure_triggers_transport_close",
        .run = test_send_failure_triggers_transport_close},
+      {.name = "invalid_request_shapes", .run = test_invalid_request_shapes},
+      {.name = "batch_edge_cases", .run = test_batch_edge_cases},
+      {.name = "framing_and_embedded_nul_parse_error",
+       .run = test_framing_and_embedded_nul_parse_error},
+      {.name = "request_too_large_closes_connection",
+       .run = test_request_too_large_closes_connection},
+      {.name = "inbound_buffer_overflow_closes_connection",
+       .run = test_inbound_buffer_overflow_closes_connection},
+      {.name = "request_handler_error_paths",
+       .run = test_request_handler_error_paths},
+      {.name = "no_request_callback_returns_method_not_found",
+       .run = test_no_request_callback_returns_method_not_found},
+      {.name = "connection_closed_during_on_open_returns_null",
+       .run = test_connection_closed_during_on_open_returns_null},
+      {.name = "arena_api_paths", .run = test_arena_api_paths},
   };
 
   size_t failures = 0U;
